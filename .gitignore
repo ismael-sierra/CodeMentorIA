@@ -1,0 +1,38 @@
+# Variables de entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Bases de datos locales
+instance/*.db
+instance/*.db-*
+*.sqlite
+*.sqlite3
+
+# Archivos temporales
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+
+# Editores
+.vscode/
+.idea/
