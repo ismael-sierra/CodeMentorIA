@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 import database
 from app import app
+from werkzeug.security import generate_password_hash
+from database import crear_usuario
 
 
 EJERCICIO_FALSO = {
@@ -39,7 +41,27 @@ class PruebasCodeMentor(unittest.TestCase):
         database.inicializar_db()
 
         app.config["TESTING"] = True
-        self.cliente = app.test_client()
+        app.config["SESSION_COOKIE_SECURE"] = False
+        cliente_real = app.test_client()
+        usuario_id = crear_usuario("pruebas@example.com", generate_password_hash("clave-segura-123"))
+        self.usuario_id = usuario_id
+        with cliente_real.session_transaction() as sesion:
+            sesion["usuario_id"] = usuario_id
+            sesion["csrf_token"] = "token-pruebas"
+
+        class ClienteConCSRF:
+            def __init__(self, cliente):
+                self.cliente = cliente
+            def get(self, *args, **kwargs):
+                return self.cliente.get(*args, **kwargs)
+            def post(self, *args, **kwargs):
+                kwargs.setdefault("headers", {})["X-CSRF-Token"] = "token-pruebas"
+                return self.cliente.post(*args, **kwargs)
+            def delete(self, *args, **kwargs):
+                kwargs.setdefault("headers", {})["X-CSRF-Token"] = "token-pruebas"
+                return self.cliente.delete(*args, **kwargs)
+
+        self.cliente = ClienteConCSRF(cliente_real)
 
     def tearDown(self):
         database.DATABASE = self.ruta_original
@@ -163,7 +185,8 @@ class PruebasCodeMentor(unittest.TestCase):
         database.guardar_mensaje(
             conversacion_id,
             "user",
-            "Hola"
+            "Hola",
+            self.usuario_id
         )
 
         self.cliente.delete(
@@ -171,7 +194,7 @@ class PruebasCodeMentor(unittest.TestCase):
         )
 
         self.assertEqual(
-            database.obtener_mensajes(conversacion_id),
+            database.obtener_mensajes(conversacion_id, self.usuario_id) if database.existe_conversacion(conversacion_id, self.usuario_id) else [],
             []
         )
 
@@ -249,7 +272,8 @@ class PruebasCodeMentor(unittest.TestCase):
         database.guardar_intento(
             ejercicio_id,
             "print('hola')",
-            CORRECCION_FALSA
+            CORRECCION_FALSA,
+            self.usuario_id
         )
 
         solucion_falsa = (
@@ -297,3 +321,73 @@ class PruebasCodeMentor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class PruebasAislamientoUsuarios(unittest.TestCase):
+    def setUp(self):
+        self.directorio = tempfile.TemporaryDirectory()
+        self.ruta_original = database.DATABASE
+        database.DATABASE = Path(self.directorio.name) / "aislamiento.db"
+        database.inicializar_db()
+        app.config.update(TESTING=True, SESSION_COOKIE_SECURE=False)
+        self.cliente = app.test_client()
+
+    def tearDown(self):
+        database.DATABASE = self.ruta_original
+        self.directorio.cleanup()
+
+    def registrar(self, email):
+        self.cliente.get('/registro')
+        with self.cliente.session_transaction() as sesion:
+            token = sesion['csrf_token']
+        respuesta = self.cliente.post('/registro', data={
+            'email': email, 'password': 'clave-segura-12345',
+            'confirm_password': 'clave-segura-12345', 'csrf_token': token
+        })
+        self.assertEqual(respuesta.status_code, 302)
+        with self.cliente.session_transaction() as sesion:
+            return sesion['csrf_token']
+
+    def test_api_requiere_sesion(self):
+        self.assertEqual(self.cliente.get('/api/conversaciones').status_code, 401)
+        self.assertEqual(self.cliente.get('/').status_code, 302)
+
+    def test_conversaciones_y_ejercicios_aislados(self):
+        token = self.registrar('uno@example.com')
+        cabeceras = {'X-CSRF-Token': token}
+        chat = self.cliente.post('/api/conversaciones', headers=cabeceras).get_json()['id']
+        with patch('app.generar_ejercicio', return_value=EJERCICIO_FALSO):
+            ejercicio = self.cliente.post('/api/ejercicios/generar', json={
+                'tema': 'funciones', 'nivel': 'basico'
+            }, headers=cabeceras).get_json()['ejercicio']['id']
+        self.cliente.post('/salir', data={'csrf_token': token})
+        token = self.registrar('dos@example.com')
+        cabeceras = {'X-CSRF-Token': token}
+        self.assertEqual(self.cliente.get('/api/conversaciones').get_json(), [])
+        self.assertEqual(self.cliente.get('/api/ejercicios').get_json(), [])
+        self.assertEqual(self.cliente.get(f'/api/conversaciones/{chat}').status_code, 404)
+        self.assertEqual(self.cliente.get(f'/api/ejercicios/{ejercicio}').status_code, 404)
+        self.assertEqual(self.cliente.delete(f'/api/conversaciones/{chat}', headers=cabeceras).status_code, 404)
+        self.assertEqual(self.cliente.post('/api/chat', json={
+            'conversacion_id': chat, 'mensaje': 'Hola'
+        }, headers=cabeceras).status_code, 404)
+        self.assertEqual(self.cliente.post('/api/ejercicios/corregir', json={
+            'ejercicio_id': ejercicio, 'codigo': 'print(1)'
+        }, headers=cabeceras).status_code, 404)
+
+    def test_csrf_y_registro_duplicado(self):
+        self.registrar('uno@example.com')
+        self.assertEqual(self.cliente.post('/api/conversaciones').status_code, 400)
+        self.cliente.post('/salir', data={'csrf_token': 'incorrecto'})
+        with self.cliente.session_transaction() as sesion:
+            self.assertIn('usuario_id', sesion)
+
+    def test_datos_antiguos_se_conservan_sin_propietario(self):
+        with database.conectar() as db:
+            db.execute("INSERT INTO conversaciones (titulo) VALUES ('Chat anterior')")
+            db.execute("INSERT INTO ejercicios (tema,nivel,titulo,enunciado,requisitos,pista) VALUES ('variables','basico','Anterior','Enunciado','[]','Pista')")
+        self.registrar('uno@example.com')
+        self.assertEqual(self.cliente.get('/api/conversaciones').get_json(), [])
+        self.assertEqual(self.cliente.get('/api/ejercicios').get_json(), [])
+        with database.conectar() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM conversaciones').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM ejercicios').fetchone()[0], 1)

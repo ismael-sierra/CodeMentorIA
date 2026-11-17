@@ -172,3 +172,9 @@ Proyecto educativo en desarrollo, con pruebas automatizadas para sus principales
 ## Licencia
 
 Pendiente de definir.
+
+## Registro e inicio de sesión
+
+La aplicación incluye cuentas con correo electrónico y contraseña, conversaciones privadas,
+ejercicios e intentos separados por usuario. Para actualizar una instalación existente,
+consulta [DESPLIEGUE_USUARIOS.md](DESPLIEGUE_USUARIOS.md) antes de desplegar.

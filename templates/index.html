@@ -40,6 +40,7 @@
   </head>
 
   <body>
+    <meta name="csrf-token" content="{{ csrf_token }}" />
     <div class="app-layout">
       <!-- SIDEBAR -->
       <aside class="sidebar" id="sidebar">
@@ -104,6 +105,20 @@
             <span>Cambiar tema</span>
           </button>
 
+          <div class="app-version" style="overflow-wrap: anywhere">
+            {{ usuario.email }}
+          </div>
+          <form
+            action="{{ url_for('salir') }}"
+            method="post"
+            style="padding: 8px 0"
+          >
+            <input
+              type="hidden"
+              name="csrf_token"
+              value="{{ csrf_token }}"
+            /><button class="nav-item" type="submit">Cerrar sesión</button>
+          </form>
           <div class="app-version">CodeMentor IA <span>v0.1</span></div>
         </div>
       </aside>

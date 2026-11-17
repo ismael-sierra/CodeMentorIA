@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>{{ 'Registro' if registro else 'Acceso' }} · CodeMentor IA</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #0d1320;
+        color: #edf3ff;
+        font: 16px system-ui;
+        display: grid;
+        place-items: center;
+      }
+      .panel {
+        width: min(420px, calc(100% - 48px));
+        background: #192337;
+        border: 1px solid #334158;
+        border-radius: 18px;
+        padding: 32px;
+        box-shadow: 0 18px 60px #0005;
+      }
+      h1 {
+        margin: 0 0 8px;
+      }
+      p {
+        color: #b5c2d7;
+      }
+      label {
+        display: block;
+        margin-top: 16px;
+        font-weight: 600;
+      }
+      input {
+        box-sizing: border-box;
+        width: 100%;
+        margin-top: 7px;
+        border: 1px solid #51617b;
+        background: #0d1320;
+        color: white;
+        border-radius: 9px;
+        padding: 12px;
+        font: inherit;
+      }
+      button {
+        width: 100%;
+        margin-top: 24px;
+        padding: 13px;
+        background: #5489ff;
+        border: 0;
+        border-radius: 9px;
+        font-weight: 700;
+        color: #fff;
+        cursor: pointer;
+      }
+      a {
+        color: #9bbcff;
+      }
+      .error {
+        background: #5c2730;
+        color: #fff;
+        padding: 12px;
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <h1>CodeMentor IA</h1>
+      <p>
+        {{ 'Crea tu cuenta para guardar tus chats y ejercicios.' if registro
+        else 'Accede a tus conversaciones privadas.' }}
+      </p>
+      {% for categoria, mensaje in get_flashed_messages(with_categories=true) %}
+      <div class="error" role="alert">{{ mensaje }}</div>
+      {% endfor %}
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><label
+          >Correo electrónico<input
+            type="email"
+            name="email"
+            autocomplete="email"
+            maxlength="254"
+            required /></label
+        ><label
+          >Contraseña<input
+            type="password"
+            name="password"
+            autocomplete="new-password"
+            required
+            {%
+            if
+            registro
+            %}minlength="12"
+            {%
+            endif
+            %}
+        /></label>
+        {% if registro %}<label
+          >Confirmar contraseña<input
+            type="password"
+            name="confirm_password"
+            autocomplete="new-password"
+            minlength="12"
+            required /></label
+        >{% endif %}
+        <button type="submit">
+          {{ 'Crear cuenta' if registro else 'Iniciar sesión' }}
+        </button>
+      </form>
+      <p>
+        {% if registro %}¿Ya tienes cuenta?
+        <a href="{{ url_for('acceso') }}">Inicia sesión</a>{% else %}¿No tienes
+        cuenta? <a href="{{ url_for('registro') }}">Regístrate</a>{% endif %}
+      </p>
+    </main>
+  </body>
+</html>

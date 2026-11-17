@@ -36,3 +36,11 @@ Thumbs.db
 # Editores
 .vscode/
 .idea/
+
+# Bases de datos y copias de seguridad
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.db.bak
+*.db.backup

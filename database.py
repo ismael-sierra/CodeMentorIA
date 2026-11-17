@@ -40,6 +40,13 @@ def conectar():
 def inicializar_db():
     with conectar() as db:
         db.executescript("""
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                fecha_creacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS conversaciones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 titulo TEXT NOT NULL
@@ -99,54 +106,78 @@ def inicializar_db():
             CREATE INDEX IF NOT EXISTS idx_intentos_ejercicio
             ON intentos(ejercicio_id, id);
         """)
+        for tabla in ("conversaciones", "ejercicios"):
+            columnas = {fila["name"] for fila in db.execute(f"PRAGMA table_info({tabla})")}
+            if "usuario_id" not in columnas:
+                db.execute(f"ALTER TABLE {tabla} ADD COLUMN usuario_id INTEGER REFERENCES usuarios(id)")
+            db.execute(f"CREATE INDEX IF NOT EXISTS idx_{tabla}_usuario ON {tabla}(usuario_id)")
+
+
+def crear_usuario(email, password_hash):
+    with conectar() as db:
+        cursor = db.execute("INSERT INTO usuarios (email, password_hash) VALUES (?, ?)", (email, password_hash))
+        return cursor.lastrowid
+
+
+def obtener_usuario_por_email(email):
+    with conectar() as db:
+        fila = db.execute("SELECT id, email, password_hash FROM usuarios WHERE email = ? COLLATE NOCASE", (email,)).fetchone()
+        return dict(fila) if fila else None
+
+
+def obtener_usuario_por_id(usuario_id):
+    with conectar() as db:
+        fila = db.execute("SELECT id, email FROM usuarios WHERE id = ?", (usuario_id,)).fetchone()
+        return dict(fila) if fila else None
 
 
 # ==========================================
 # CONVERSACIONES
 # ==========================================
 
-def crear_conversacion():
+def crear_conversacion(usuario_id):
     with conectar() as db:
         cursor = db.execute(
-            "INSERT INTO conversaciones DEFAULT VALUES"
+            "INSERT INTO conversaciones (usuario_id) VALUES (?)", (usuario_id,)
         )
         return cursor.lastrowid
 
 
-def existe_conversacion(conversacion_id):
+def existe_conversacion(conversacion_id, usuario_id):
     with conectar() as db:
         fila = db.execute("""
             SELECT id
             FROM conversaciones
-            WHERE id = ?
-        """, (conversacion_id,)).fetchone()
+            WHERE id = ? AND usuario_id = ?
+        """, (conversacion_id, usuario_id)).fetchone()
 
         return fila is not None
 
 
-def listar_conversaciones():
+def listar_conversaciones(usuario_id):
     with conectar() as db:
         filas = db.execute("""
             SELECT id, titulo, fecha_creacion
             FROM conversaciones
+            WHERE usuario_id = ?
             ORDER BY id DESC
-        """).fetchall()
+        """, (usuario_id,)).fetchall()
 
         return [dict(fila) for fila in filas]
 
 
-def obtener_conversacion(conversacion_id):
+def obtener_conversacion(conversacion_id, usuario_id):
     with conectar() as db:
         fila = db.execute("""
             SELECT id, titulo, fecha_creacion
             FROM conversaciones
-            WHERE id = ?
-        """, (conversacion_id,)).fetchone()
+            WHERE id = ? AND usuario_id = ?
+        """, (conversacion_id, usuario_id)).fetchone()
 
         return dict(fila) if fila else None
 
 
-def eliminar_conversacion(conversacion_id):
+def eliminar_conversacion(conversacion_id, usuario_id):
     """
     Elimina una conversación y sus mensajes.
     Devuelve True si existía.
@@ -154,22 +185,24 @@ def eliminar_conversacion(conversacion_id):
     with conectar() as db:
         cursor = db.execute("""
             DELETE FROM conversaciones
-            WHERE id = ?
-        """, (conversacion_id,))
+            WHERE id = ? AND usuario_id = ?
+        """, (conversacion_id, usuario_id))
 
         return cursor.rowcount > 0
 
 
-def actualizar_titulo(conversacion_id, titulo):
+def actualizar_titulo(conversacion_id, titulo, usuario_id):
     with conectar() as db:
         db.execute("""
             UPDATE conversaciones
             SET titulo = ?
-            WHERE id = ?
-        """, (titulo[:80], conversacion_id))
+            WHERE id = ? AND usuario_id = ?
+        """, (titulo[:80], conversacion_id, usuario_id))
 
 
-def guardar_intercambio(conversacion_id, pregunta, respuesta):
+def guardar_intercambio(conversacion_id, pregunta, respuesta, usuario_id):
+    if not existe_conversacion(conversacion_id, usuario_id):
+        raise ValueError("Recurso no encontrado o sin permisos")
     with conectar() as db:
         db.executemany("""
             INSERT INTO mensajes (
@@ -193,11 +226,13 @@ def guardar_intercambio(conversacion_id, pregunta, respuesta):
             db.execute("""
                 UPDATE conversaciones
                 SET titulo = ?
-                WHERE id = ?
-            """, (pregunta[:60], conversacion_id))
+                WHERE id = ? AND usuario_id = ?
+            """, (pregunta[:60], conversacion_id, usuario_id))
 
 
-def guardar_mensaje(conversacion_id, rol, contenido):
+def guardar_mensaje(conversacion_id, rol, contenido, usuario_id):
+    if not existe_conversacion(conversacion_id, usuario_id):
+        raise ValueError("Recurso no encontrado o sin permisos")
     if rol not in ("user", "assistant"):
         raise ValueError("Rol de mensaje no válido.")
 
@@ -212,7 +247,9 @@ def guardar_mensaje(conversacion_id, rol, contenido):
         """, (conversacion_id, rol, contenido))
 
 
-def obtener_mensajes(conversacion_id):
+def obtener_mensajes(conversacion_id, usuario_id):
+    if not existe_conversacion(conversacion_id, usuario_id):
+        raise ValueError("Recurso no encontrado o sin permisos")
     with conectar() as db:
         filas = db.execute("""
             SELECT id, rol, contenido, fecha
@@ -224,7 +261,9 @@ def obtener_mensajes(conversacion_id):
         return [dict(fila) for fila in filas]
 
 
-def obtener_contexto(conversacion_id, limite=10):
+def obtener_contexto(conversacion_id, usuario_id, limite=10):
+    if not existe_conversacion(conversacion_id, usuario_id):
+        raise ValueError("Recurso no encontrado o sin permisos")
     with conectar() as db:
         filas = db.execute("""
             SELECT rol, contenido
@@ -249,7 +288,7 @@ def obtener_contexto(conversacion_id, limite=10):
 # EJERCICIOS
 # ==========================================
 
-def guardar_ejercicio(tema, nivel, ejercicio):
+def guardar_ejercicio(tema, nivel, ejercicio, usuario_id):
     with conectar() as db:
         cursor = db.execute("""
             INSERT INTO ejercicios (
@@ -258,9 +297,9 @@ def guardar_ejercicio(tema, nivel, ejercicio):
                 titulo,
                 enunciado,
                 requisitos,
-                pista
+                pista, usuario_id
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             tema,
             nivel,
@@ -270,7 +309,7 @@ def guardar_ejercicio(tema, nivel, ejercicio):
                 ejercicio["requisitos"],
                 ensure_ascii=False
             ),
-            ejercicio["pista"]
+            ejercicio["pista"], usuario_id
         ))
 
         return cursor.lastrowid
@@ -289,24 +328,25 @@ def convertir_ejercicio(fila):
     return ejercicio
 
 
-def obtener_ejercicio(ejercicio_id):
+def obtener_ejercicio(ejercicio_id, usuario_id):
     with conectar() as db:
         fila = db.execute("""
             SELECT *
             FROM ejercicios
-            WHERE id = ?
-        """, (ejercicio_id,)).fetchone()
+            WHERE id = ? AND usuario_id = ?
+        """, (ejercicio_id, usuario_id)).fetchone()
 
         return convertir_ejercicio(fila)
 
 
-def listar_ejercicios():
+def listar_ejercicios(usuario_id):
     with conectar() as db:
         filas = db.execute("""
             SELECT *
             FROM ejercicios
+            WHERE usuario_id = ?
             ORDER BY id DESC
-        """).fetchall()
+        """, (usuario_id,)).fetchall()
 
         return [
             convertir_ejercicio(fila)
@@ -318,7 +358,9 @@ def listar_ejercicios():
 # INTENTOS Y CORRECCIONES
 # ==========================================
 
-def guardar_intento(ejercicio_id, codigo, correccion):
+def guardar_intento(ejercicio_id, codigo, correccion, usuario_id):
+    if not obtener_ejercicio(ejercicio_id, usuario_id):
+        raise ValueError("Recurso no encontrado o sin permisos")
     with conectar() as db:
         cursor = db.execute("""
             INSERT INTO intentos (
@@ -341,7 +383,9 @@ def guardar_intento(ejercicio_id, codigo, correccion):
         return cursor.lastrowid
 
 
-def obtener_intentos(ejercicio_id):
+def obtener_intentos(ejercicio_id, usuario_id):
+    if not obtener_ejercicio(ejercicio_id, usuario_id):
+        raise ValueError("Recurso no encontrado o sin permisos")
     with conectar() as db:
         filas = db.execute("""
             SELECT *
@@ -368,28 +412,28 @@ def obtener_intentos(ejercicio_id):
 # ESTADÍSTICAS
 # ==========================================
 
-def obtener_estadisticas():
+def obtener_estadisticas(usuario_id):
     with conectar() as db:
         total_ejercicios = db.execute("""
             SELECT COUNT(*)
-            FROM ejercicios
-        """).fetchone()[0]
+            FROM ejercicios WHERE usuario_id = ?
+        """, (usuario_id,)).fetchone()[0]
 
         completados = db.execute("""
             SELECT COUNT(DISTINCT ejercicio_id)
             FROM intentos
-            WHERE estado = 'correcto'
-        """).fetchone()[0]
+            WHERE estado = 'correcto' AND ejercicio_id IN (SELECT id FROM ejercicios WHERE usuario_id = ?)
+        """, (usuario_id,)).fetchone()[0]
 
         conversaciones = db.execute("""
             SELECT COUNT(*)
-            FROM conversaciones
-        """).fetchone()[0]
+            FROM conversaciones WHERE usuario_id = ?
+        """, (usuario_id,)).fetchone()[0]
 
         intentos = db.execute("""
             SELECT COUNT(*)
-            FROM intentos
-        """).fetchone()[0]
+            FROM intentos WHERE ejercicio_id IN (SELECT id FROM ejercicios WHERE usuario_id = ?)
+        """, (usuario_id,)).fetchone()[0]
 
     return {
         "total_ejercicios": total_ejercicios,
@@ -399,7 +443,7 @@ def obtener_estadisticas():
     }
 
 
-def obtener_actividad_reciente(limite=10):
+def obtener_actividad_reciente(usuario_id, limite=10):
     with conectar() as db:
         filas = db.execute("""
             SELECT
@@ -413,8 +457,9 @@ def obtener_actividad_reciente(limite=10):
             FROM intentos i
             JOIN ejercicios e
                 ON e.id = i.ejercicio_id
+            WHERE e.usuario_id = ?
             ORDER BY i.id DESC
             LIMIT ?
-        """, (limite,)).fetchall()
+        """, (usuario_id, limite)).fetchall()
 
         return [dict(fila) for fila in filas]

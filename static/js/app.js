@@ -58,7 +58,10 @@ let solucionActual = null;
 // ==========================================
 
 async function solicitarJSON(url, opciones = {}) {
-  const respuesta = await fetch(url, opciones);
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+  const headers = new Headers(opciones.headers || {});
+  if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  const respuesta = await fetch(url, { ...opciones, headers });
 
   let datos;
 
